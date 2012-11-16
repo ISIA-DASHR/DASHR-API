@@ -1,0 +1,759 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>MPEG-DASH MP4 player example</title>
+    <link rel="stylesheet" href="style.css" />
+    <script type="text/javascript">
+(function() {
+
+// Log messages to stdio console. This avoids having to load developer tools in
+// debug builds, which is painfully slow.
+var LOG_CONSOLE=true;
+
+var start_time = Date.now();
+
+function log() {
+  if (!LOG_CONSOLE)
+    console.log.apply(console, arguments);
+
+  var t = Math.round(Date.now() - start_time);
+  var vals = [];
+  for (var i = 0; i < arguments.length; i++) {
+    var v = '' + arguments[i];
+    if (v.slice(0, 4) == '[obj') continue;
+    vals.push(v);
+  }
+  var msg = t + ': ' + vals.join(', ');
+  var box = document.getElementById('console');
+  if (box) box.value += msg + '\n';
+  if (LOG_CONSOLE) console.log(msg);
+}
+window.log = log;
+
+// TODO(strobe): Add on-page verbosity level control
+var DLOG_LEVEL=4;
+
+function dlog(level) {
+  if (level <= DLOG_LEVEL) {
+    log.apply(null, arguments);
+  }
+}
+window.dlog = dlog;
+
+})();
+    </script>
+    <script type="text/javascript" src="dash-manifest.js"></script>
+    <script type="text/javascript" src="iso-bmff.js"></script>
+    <!-- Including this script on the page enables support for browsers
+    implementing MSE-v0.5 through MSE-latest, including all known prefixes. The
+    application can use the object-oriented, unprefixed Media Source interface,
+    even on MSE-v0.5 implementations. -->
+    <script type="text/javascript" src="media-source-portability.js"></script>
+  </head>
+  <body>
+    <div class="content">
+      <header>
+        <h1><a href=".">MPEG-DASH / ISO BMFF / Media Source demo</a></h1>
+        <div class="linkbar">
+          <a href=".">Index</a> ·
+          <a href="media.html">Sample media</a> ·
+          <a href="decoder-test.html">Decoder test media</a> ·
+          <strong><a href="dash-player.html">Demo player</a></strong> ·
+          <a href="release-notes.html">Release notes</a>
+        </div>
+      </header>
+      <p class="attention" id="choose_example">Choose an example MPD:</p>
+      <ul><li>car: <a href="?url=http://yt-dash-mse-test.commondatastorage.googleapis.com/car-20120827-manifest.mpd">both</a></li>
+<li>car_cenc: <a href="?url=http://yt-dash-mse-test.commondatastorage.googleapis.com/car_cenc-20120827-manifest.mpd">both</a></li>
+<li>motion: <a href="?url=http://yt-dash-mse-test.commondatastorage.googleapis.com/motion-20120802-manifest.mpd">both</a></li>
+<li>oops: <a href="?url=http://yt-dash-mse-test.commondatastorage.googleapis.com/oops-20120802-manifest.mpd">both</a></li></ul>
+      <p>Or enter your own path to an MPD:</p>
+      <form action="dash-player.html" id="player-conf">
+        <input id="url" type="text" name="url" size=80 required
+          placeholder="URL of DASH .mpd" />
+        <input type="submit"/>
+        <br />
+        <label for="maxrate">Max video BW (kbps):</label>
+        <input id="maxrate" type="number" name="maxrate" size=8
+        value=4000 min=100 max=6000 />
+
+        <input id="autoplay" type="checkbox" name="autoplay" checked />
+        <label for="autoplay">Autoplay</label>
+      </form>
+
+      <p id="noeme" style="display: none;"> Please go to
+      <code>chrome://flags</code>, click on the "Enable" link under
+      "Encrypted Media Extensions", and restart your browser.</p>
+
+      <p id="nomse" style="display: none;"> Please go to
+      <code>chrome://flags</code>, click on the "Enable" link under "Media
+      Source Extensions", and restart your browser.</p>
+
+      <p id="msedisabled" style="display: none;">
+      Please go to <code>chrome://flags</code> and make sure "Disable Media
+      Source API" is <strong>disabled</strong>. In older versions, this flag
+      enabled Media Source, but now that Media Source is on by default,
+      its meaning has been reversed, so now you have to turn it off again.
+      Remember to restart your browser afterward.</p>
+
+      <p id="audwarn" style="display: none;"> Note that support for audio
+      decryption is not implemented in Chrome at time of writing. This may
+      cause decode errors in the audio track. See
+      <a href="http://crbug.com/123421">Chrome bug 123421</a>
+      to track the progress of this issue. You can also try a manifest with <a
+      id='vidlink'>video-only</a> encryption.</p>
+
+      <div id="dashcontrols">
+        <form id="seekform">
+          <label for="time">Time:</label>
+          <input type="text" size=8 name="time" placeholder="seconds" />
+          <input type="button" id="seekbtn" name="seek" value="Seek" />
+        </form>
+        <form id="repform">Representations:</form>
+      </div>
+
+      <video id="v" controls></video>
+
+      <div id="bufbar" class="progressbox">
+        <div class="posbar"></div>
+      </div>
+
+      <textarea readonly=true rows=12 id="console"></textarea>
+
+      <h3>Troubleshooting</h3>
+      <p>For more details on these issues, see the <a
+        href="/release-notes.html">Release Notes</a>.</p>
+      <p><em>"Media Source not found!" in log:</em> Navigate to
+      <code>chrome://flags</code> and enable "Media Source extensions" and
+      "Encrypted Media extensions", then restart the browser.</p>
+      <p><em>"Adding AVC source failed!" in log:</em> Ensure you are using
+      a recent version of Chrome Canary. Chromium doesn't work, since it
+      does not build with the appropriate codecs by default.</p>
+      <p><em>Crash / video disappearing on stream switching:</em> Launch the
+      Chrome Canary process with <code>--video-threads=1</code>.</p>
+      <footer>0.2-89-gaacf054</footer>
+    </div>
+
+    <script type="text/javascript">
+(function() {
+
+function absolutizeURL(base, target) {
+  if (target.match(/^[a-z]*:\/\//)) return target;
+  var rel_url;
+  if (target[0] == '/') {
+    rel_url = base.match(/^[a-z]*:\/\/[^\/]*/)[0];
+  } else {
+    rel_url = base.replace(/\/[^\/]*$/, '/');
+  }
+  return rel_url + target;
+}
+
+function getURLQueryParameter(name) {
+  var re = new RegExp("[?&]" + name + "=([^&]*)");
+  var result = re.exec(window.location.search);
+  if (result != null) {
+    result = result[1];
+    if (/%/.exec(result)) result = decodeURIComponent(result);
+    return result;
+  }
+  return null;
+}
+
+function syncQueryParameters(form) {
+  var elements = form.elements;
+  for (var i = 0; i < elements.length; i++) {
+    var val = getURLQueryParameter(elements[i].name);
+    if (elements[i].type == 'checkbox') {
+      elements[i].checked = val;
+    } else if (val != null) {
+      elements[i].value = val;
+    }
+  }
+}
+
+function retrieveDASHManifest(url) {
+  var xhr = new XMLHttpRequest();
+  xhr.addEventListener('load', onManifestLoad.bind(null, url));
+  xhr.addEventListener('error', onManifestError.bind(null, url));
+  xhr.open("GET", url);
+  xhr.send();
+  dlog(1, "XHR for manifest sent");
+}
+
+function onManifestLoad(url, evt) {
+  dlog(2, "Manifest received");
+  if (!(evt.target.status >= 200 && evt.target.status < 299)) {
+    log('HTTP error ' + evt.target.status +
+        ' retrieving DASH manifest from ' + url);
+    return;
+  }
+  var mpd = parseDASHManifest(evt.target.responseText, url);
+  if (mpd == null) {
+    log('Error parsing DASH manifest!');
+    return;
+  }
+  var vid = document.getElementById('v');
+  window.v = vid;  // For ease of debugging
+  vid.volume = 0.1;  // To avoid blasting your ears when debugging
+
+  var msrc = new MediaSource();
+  msrc.mpd = mpd;
+  msrc.addEventListener('sourceopen', onSourceOpen.bind(null, vid, msrc));
+  msrc.addEventListener('webkitsourceopen', onSourceOpen.bind(null, vid, msrc));
+  attachMediaSource(vid, msrc);
+
+  window.setInterval(onProgress.bind(vid, msrc), 1000);
+
+  vid.addEventListener('seeking', onSeeking.bind(vid, msrc));
+  vid.addEventListener('timeupdate', onProgress.bind(vid, msrc));
+  vid.addEventListener('pause', onPause);
+  vid.addEventListener('play', onPlay);
+  vid.addEventListener('webkitneedkey', onNeedKey.bind(vid, msrc));
+  vid.addEventListener('webkitkeymessage', onKeyMessage.bind(vid, msrc));
+
+  // True if the next 'pause' event will be (or is expected to be) generated as
+  // a result of automatic pausing, such as a buffer stall. Setting this masks
+  // the next pause event from changing the user's paused state.
+  // TODO(strobe): this is a hack in place until custom controls are in and we
+  // can attach to the clicks and set the state directly.
+  vid.autopause_pending = false;
+
+  // True if the reason for the video being paused was not the result of user
+  // action, and the video is currently paused.
+  vid.autopaused = document.getElementById('autoplay').checked;
+}
+
+// TODO: fix this, then eliminate it
+ITAG_BANDWIDTHS = {'160': 200000, '133': 400000, '134': 800000, '135': 2000000,
+                   '136': 4000000, '139': 40000, '140': 128000, '141': 256000}
+
+function normalizeRepresentation(mpd, repSrc) {
+  var rep = {
+    'url': absolutizeURL(mpd.manifestURL, repSrc.baseURLs[0]),
+    'bandwidth': repSrc.bandwidth || ITAG_BANDWIDTHS[repSrc.id]
+  };
+  var init = null;
+  if (repSrc.segmentList != null) {
+    init = repSrc.segmentList.initialization;
+    rep.segs = [];
+    for (var k = 0; k < repSrc.segmentList.segmentURLs.length; k++) {
+      var segSrc = repSrc.segmentList.segmentURLs[k];
+      var seg = {
+        'start': segSrc.mediaRange.start,
+        'end': segSrc.mediaRange.end,
+        'index': segSrc.indexRange && segSrc.indexRange.end || null,
+        'time': repSrc.segmentList.durationSeconds * k,
+        'duration': repSrc.segmentList.durationSeconds,
+        'subsegments': null
+      };
+      rep.segs.push(seg);
+    }
+  } else {
+    // For now, assume VOD profile content
+    var seg = {
+      'start': null,
+      'end': null,
+      'index': null,
+      'time': 0,
+      'duration': mpd.periods[0].duration || mpd.mediaPresentationDuration,
+      'subsegments': null
+    };
+    if (repSrc.segmentBase != null) {
+      var segSrc = repSrc.segmentBase;
+      init = segSrc.initialization;
+      if (segSrc.indexRange != null)
+        seg.index = segSrc.indexRange.end;
+    }
+    rep.segs = [seg];
+  }
+  rep.init = {
+    'start': (init && init.start) || 0,
+    'end': (init && init.end) || rep.segs[0].index || null,
+    'value': null
+  };
+  return rep;
+}
+
+// Shared set of keys held by all objects
+var licenses = [];
+
+function onSourceOpen(video, msrc, evt) {
+  dlog(3, "onSourceOpen()");
+  var mpd = msrc.mpd;
+
+  if (msrc.sourceBuffers.length) {
+    dlog(4, "onSourceOpen(): Target already has buffers, bailing.");
+    return;
+  }
+
+  var maxRate = document.getElementById('maxrate').value * 1024;
+  msrc.duration = mpd.periods[0].duration || mpd.mediaPresentationDuration;
+
+  for (var i = 0; i < mpd.periods[0].adaptationSets.length; i++) {
+    var aset = mpd.periods[0].adaptationSets[i];
+    var reps = aset.representations.map(normalizeRepresentation.bind(null, mpd));
+
+    var mime = aset.representations[0].mimeType || aset.mimeType;
+    var codecs = aset.representations[0].codecs || aset.codecs;
+    codecs = codecs.replace(/0x/, '');
+    if (codecs == 'unknown') codecs = 'mp4a.40.2';
+    var buf = msrc.addSourceBuffer(mime + '; codecs="' + codecs + '"');
+
+    buf.aset = aset;    // Full adaptation set, retained for reference
+    buf.reps = reps;    // Individual normalized representations
+    buf.currentRep = 0; // Index into reps[]
+
+    if (maxRate > 0) {
+      var bestRate = 0;
+      // Find the first representation under the max rate
+      for (var j = 0; j < reps.length; j++) {
+        if (reps[j].bandwidth < maxRate && reps[j].bandwidth > bestRate) {
+          buf.currentRep = j;
+          bestRate = reps[j].bandwidth;
+        }
+      }
+    }
+
+    buf.url = null;       // Most-recently-used data from which data was fetched
+    buf.offset = null;    // Start byte of most recent fetch from 'url'
+    buf.last_init = null;  // Most-recently-appended initialization resource
+
+    buf.resetReason = null; // Reason for performing last call to reset().
+                            // Used for better QoE when refilling after reset().
+
+    var cp = aset.contentProtection;
+    if (cp != null) {
+      // Temporary hack to display warning message. TODO: remove
+      document.getElementById('audwarn').style.display = 'block';
+      document.getElementById('vidlink').href =
+        window.location.href.replace('manifest.mpd', 'manifest_vidonly.mpd');
+      for (var j = 0; j < cp.length; j++) {
+        licenses.push(cp[j]);
+        video.webkitGenerateKeyRequest('webkit-org.w3.clearkey', cp[j].id);
+      }
+    }
+  }
+  updateRepresentationForm(msrc);
+}
+
+function onManifestError(url, evt) {
+  log('Error retrieving manifest from ' + url);
+}
+
+function onPause(evt) {
+  log('Paused, auto=' + this.autopause_pending);
+  this.autopaused = this.autopause_pending;
+  this.autopause_pending = false;
+}
+
+function onPlay(msrc, evt) {
+  log('Playing');
+  this.autopause_pending = false;
+  this.autopaused = false;
+}
+
+function onSeeking(msrc, evt) {
+  // TODO(strobe): Build quality index, other abstractions so that we know which
+  // range is currently being appended explicitly and whether we should reset
+  for (var i = 0; i < msrc.sourceBuffers.length; i++)
+    resetSourceBuffer(msrc.sourceBuffers[i], 'seeking');
+}
+
+function onDocumentSeek(evt) {
+  evt.preventDefault();
+  var vid = document.getElementById('v');
+  var seek_form = document.getElementById('seekform');
+  var time = parseFloat(seek_form.time.value);
+  if (time == NaN) {
+    log('Invalid or missing value for time in seek form');
+    return;
+  }
+
+  dlog(1, 'Seeking to time', time);
+  vid.currentTime = time;
+}
+
+function updateRepresentationForm(msrc) {
+  dlog(4, "updateRepresentationForm()", msrc);
+  var repform = document.getElementById('repform');
+  repform.innerHTML = 'Representations:';
+  for (var buf_idx = 0; buf_idx < msrc.sourceBuffers.length; buf_idx++) {
+    var buf = msrc.sourceBuffers[buf_idx];
+    var sel = repform.appendChild(document.createElement('select'));
+    for (var i = 0; i < buf.reps.length; i++) {
+      var rep = buf.reps[i];
+      var opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = Math.round(rep.bandwidth / 1000) + 'k'; // plus codec?
+      sel.add(opt);
+    }
+    sel.value = buf.currentRep;
+    sel.addEventListener('change', onRepChange.bind(null, buf));
+  }
+}
+
+function resetSourceBuffer(buf, reason) {
+  dlog(1, 'resetSourceBuffer');
+  if (buf.xhr != null) {
+    buf.xhr.abort();
+    buf.xhr = null;
+  }
+  buf.url = null;
+  buf.offset = null;
+  buf.last_init = null;
+  buf.reset_reason = reason || null;
+  buf.abort();
+}
+
+function onRepChange(buf, evt) {
+  var reason;
+  if (buf.aset.representations[buf.currentRep].bandwidth >
+      buf.aset.representations[evt.target.value].bandwidth) {
+    reason = 'rep_down';
+  } else {
+    reason = 'rep_up';
+  }
+  resetSourceBuffer(buf, reason);
+  buf.currentRep = evt.target.value;
+}
+
+// Minimum amount of time required to continue playing. Falling below this
+// threshold results in an autopause.
+// TODO(strobe): this cuts off the last N seconds of video as well; we just
+// need to add some more edge cases to deal with EOF.
+var MIN_BUFFERED_SECS = 1;
+
+// Minimum amount of time required to be buffered in order to resume playback
+// from an autopause.
+var MIN_RESUME_SECS = 5;
+
+// Called in context of video element.
+function onProgress(msrc) {
+  var not_enough_buffered = false;
+  for (var i = 0; i < msrc.sourceBuffers.length; i++) {
+    var buf = msrc.sourceBuffers[i];
+    fetchNextSegment(buf, this);
+
+    // Find the end of the current buffered range, if any, and compare that
+    // against the current time to determine if we're stalling
+    var range = findRangeForPlaybackTime(buf, this.currentTime);
+    if (!range) {
+      not_enough_buffered = true;
+    } else if (this.paused) {
+      not_enough_buffered |= (range.end < this.currentTime + MIN_RESUME_SECS);
+    } else {
+      not_enough_buffered |= (range.end < this.currentTime + MIN_BUFFERED_SECS);
+    }
+  }
+
+  if (this.paused) {
+    if (this.autopaused) {
+      // Last pause was an autopause, decide if we should resume
+      if (!not_enough_buffered) {
+        dlog(4, 'Autoresuming');
+        this.play();
+      }
+    }
+  } else {
+    if (not_enough_buffered) {
+      dlog(4, 'Autopausing');
+      this.autopause_pending = true;
+      this.pause();
+    }
+  }
+
+  var bufbar = document.getElementById('bufbar');
+  updateBufferBar(this, msrc, bufbar);
+}
+
+function appendInit(buf, init) {
+  dlog(3, "Appending init");
+  buf.append(init.value.subarray(0, 500));
+  buf.append(init.value.subarray(500));
+  buf.last_init = init;
+}
+
+function onXHRLoad(evt) {
+  var xhr = evt.target;
+  var buf = xhr.buf;
+  buf.xhr = null;
+  var vid = buf.video;
+
+  if (xhr.readyState != xhr.DONE) return;
+  if (xhr.status >= 300) {
+    log('XHR failure, status=' + xhr.status);
+    throw 'TODO: retry XHRs on failure';
+  }
+
+  if (xhr.index_for) {
+    xhr.index_for.subsegments = parseSIDX(xhr.response, xhr.startByte);
+  }
+
+  if (xhr.is_init) {
+    xhr.init.value = extractInit(xhr.response);
+    if (buf.last_init == null) appendInit(buf, xhr.init);
+  } else {
+    if (buf.last_init !== xhr.init) appendInit(buf, xhr.init);
+    buf.append(new Uint8Array(xhr.response));
+  }
+
+  if (xhr.expected_time != null) {
+    // The expected time is the start time of the first buffer in this sequence.
+    // This check ensures that media data append time is (roughly) reflected in
+    // the buffered range.
+    range = findRangeForPlaybackTime(buf, xhr.expected_time);
+    if (range == null ||
+        !(range.start <= xhr.expected_time && range.end >= xhr.expected_time)) {
+      log('Media data expected time not reflected in updated buffer range. ' +
+          'MSE implementation bug?');
+      if (range == null) {
+        dlog(2, 'Reason: range is null');
+      } else {
+        dlog(2, 'Reason: expected time ' + xhr.expected_time + ' not in (' +
+              range.start + ', ' + range.end + ')');
+      }
+    }
+  }
+
+  if (xhr.expected_size != null) {
+    if (xhr.response.byteLength != xhr.expected_size) {
+      // Got to end of current file. Indicate to playback library that it should
+      // choose a new segment.
+      buf.offset = null;
+    }
+  }
+}
+
+function mkrange(start, end) {
+  if (start != null && end != null) return 'bytes=' + start + '-' + end;
+  return null;
+}
+
+function makeXHR(buf, url, start, end, init_ref, is_init, index_for) {
+  var xhr = new XMLHttpRequest();
+  var range = mkrange(start, end);
+  if (range != null && /streamer/.exec(url)) {
+    url = url.replace(/&range=[^&]*/, '');
+    url += '&range=' + range.substring(6);
+    xhr.expected_size = end + 1 - start;
+  }
+  xhr.open("GET", url);
+  xhr.responseType = 'arraybuffer';
+  xhr.startByte = start;
+  if (range != null && ! /streamer/.exec(url)) {
+    xhr.setRequestHeader('Range', range);
+    xhr.expected_size = end + 1 - start;
+  }
+  xhr.addEventListener('load', onXHRLoad);
+  if (url == null) throw "Null URL";
+  buf.url = url;
+  if (is_init !== true) {
+    buf.offset = start;
+  }
+  xhr.buf = buf;
+  xhr.init = init_ref;
+  xhr.is_init = is_init;
+  xhr.index_for = index_for;
+  buf.xhr = xhr;
+  xhr.send();
+  dlog(2, 'Sent XHR: url=' + url + ', range=' + range);
+  return xhr;
+}
+
+function findRangeForPlaybackTime(buf, time) {
+  var ranges = buf.buffered;
+  for (var i = 0; i < ranges.length; i++) {
+    if (ranges.start(i) <= time && ranges.end(i) >= time) {
+      return {'start': ranges.start(i), 'end': ranges.end(i)};
+    }
+  }
+}
+
+function findSegmentForTime(segments, time) {
+  for (var i = 0; i < segments.length; i++) {
+    var s = segments[i];
+    if (s.time <= time && s.time + s.duration >= time) return s;
+  }
+  dlog(5, "Could not find segment for time " + time);
+}
+
+// The approximate size of the requests that will be issued, in seconds. This
+// size is scaled by the self-reported bandwidth of the stream. We don't really
+// pay attention to the upstream chunking of the stream to determine this value
+// yet, although at some point we will.
+var CHUNK_SIZE_SECS=5;
+
+function fetchNextSegment(buf, video) {
+  if (buf.xhr) return;
+  var time = video.currentTime;
+  var rep = buf.reps[buf.currentRep];
+  var chunk_size = Math.round(CHUNK_SIZE_SECS * rep.bandwidth / 8);
+  if (rep.init.value == null) {
+    // TODO(strobe): Avoid init separate fetch
+    // Note this makes wild assumptions about the initialization segment, like,
+    // it comes at the start of a file
+    var end = rep.init.end || chunk_size;
+    var index_for = null;
+    if (rep.segs[0].index != null) {
+      end = rep.segs[0].index;
+    }
+    index_for = rep.segs[0];
+    var xhr = makeXHR(buf, rep.url, 0, end, rep.init, true, index_for);
+    return;
+  }
+
+  var range = findRangeForPlaybackTime(buf, time);
+  var append_time = (range && range.end) || time;
+  if (append_time > time + 10 || append_time + 0.5 >= video.duration) return;
+
+  if (buf.offset != null) {
+    if (range == null) {
+      // If buf.offset is set, we're continuing to append data consecutively
+      // from some previous point, as opposed to choosing a new location to
+      // start appending from. The only reason a the playback head *should* be
+      // outside of a buffered region is that we've seeked, which should have
+      // triggered an append location change if the current head fell outside
+      // of a buffered region (or in the future, if the current buffered region
+      // has content from a different quality level - but we don't track that
+      // yet or flush the buffer on quality change). It's normal to see this
+      // message once or maybe even twice after a seek, since seeking near the
+      // end of a high-bitrate segment may mean the first append didn't cover
+      // the full time between segment start and current time, but seeing this
+      // any more than that is a pretty big error.
+      // Seeing this outside of a seek means something's lying, or we
+      // underflowed and playback didn't stall.
+      log("Current playback head outside of buffer in append-continue state.");
+    }
+
+    buf.offset += chunk_size;
+    makeXHR(buf, buf.url, buf.offset, buf.offset + chunk_size - 1,
+            rep.init, false, false);
+    return;
+  }
+
+  if (buf.reset_reason == 'rep_up') {
+    // We're upgrading to a higher bandwidth. Start appending at the next
+    // available subsegment.
+    // TODO(strobe): since I'm lazy, we just start appending at the current one
+    // (lots of corner cases with guessing the next subsegment)
+    append_time = time;
+  }
+
+  var seg = findSegmentForTime(rep.segs, append_time);
+  if (seg == null) return;
+  var start = seg.start;
+  var index_for = null;
+  if (seg.subsegments == null) {
+    index_for = seg;
+  } else {
+    var subseg = findSegmentForTime(seg.subsegments, append_time);
+    start = (subseg && subseg.offset) || start || 0;
+  }
+
+  xhr = makeXHR(buf, rep.url, start, start + chunk_size - 1,
+                rep.init, false, index_for);
+  xhr.expected_time = append_time;
+}
+
+function updateBufferBar(vid, msrc, bufbar) {
+  var duration = msrc.duration;
+
+  var box = bufbar.firstElementChild;
+  // The first box is the playback position; set it
+  box.style.left = (100 * vid.currentTime / duration) + '%';
+  box = box.nextElementSibling;
+
+  for (var buf_idx = 0; buf_idx < msrc.sourceBuffers.length; buf_idx++) {
+    var ranges = msrc.sourceBuffers[buf_idx].buffered;
+    for (var i = 0; i < ranges.length; i++) {
+      if (box == null)
+        box = bufbar.appendChild(document.createElement('div'));
+      box.style.left = (100 * ranges.start(i) / duration) + '%';
+      box.style.width = (100 * (ranges.end(i) - ranges.start(i)) / duration) + '%';
+      box.style.top = (100 * buf_idx / msrc.sourceBuffers.length) + '%';
+      box.style.height = (100 / msrc.sourceBuffers.length) + '%';
+      box = box.nextElementSibling;
+    }
+  }
+
+  while (box != null) {
+    var next = box.nextElementSibling;
+    bufbar.removeChild(box);
+    box = next;
+  }
+}
+
+function onNeedKey(msrc, e) {
+  log('Key needed');
+  console.log(e);
+  // Key request already generated previously for clearkey.
+  //e.target.webkitGenerateKeyRequest('webkit-org.w3.clearkey', e.initData);
+}
+
+function onKeyMessage(msrc, e) {
+  log('Key message', e);
+  for (var i = 0; i < licenses.length; i++) {
+    var l = licenses[i];
+    if (e.message.length != l.id.length) continue;
+    var j = 0;
+    for (j; j < l.id.length; j++)
+      if (l.id[j] != e.message[j]) break;
+    if (j != l.id.length) continue;
+    this.webkitAddKey('webkit-org.w3.clearkey', l.key, e.message, e.sessionId);
+  }
+  this.play();
+}
+
+function detectFeatures(video) {
+  var ok = true;
+  if (video.webkitGenerateKeyRequest == null) {
+    document.getElementById('noeme').style.display = "block";
+    log('EME not detected.');
+    //ok = false;
+  }
+  if (!hasMediaSource()) {
+    var match = /Chrome\/23.0.([0-9]*)/.exec(window.navigator.appVersion);
+    if (match != null && parseInt(match[1]) > 1262)
+      document.getElementById('msedisabled').style.display = "block";
+    else
+      document.getElementById('nomse').style.display = "block";
+    log('MSE not detected.');
+    ok = false;
+  }
+  return ok;
+}
+
+function init() {
+  syncQueryParameters(document.getElementById('player-conf'));
+
+  var v = document.getElementById('v');
+  if (!detectFeatures(v)) {
+    log('Required features not detected, aborting.');
+    return false;
+  }
+  document.getElementById('seekform').addEventListener('submit', onDocumentSeek);
+  document.getElementById('seekbtn').addEventListener('click', onDocumentSeek);
+
+  var box = document.getElementById('console');
+  if (box) {
+    box.value = '';
+  }
+
+  log('DASH MSE/EME demo version 0.2-89-gaacf054');
+  log('-------- Initializing --------');
+  var url = document.getElementById('url').value;
+  if (url) {
+    document.getElementById('choose_example').className = '';
+    retrieveDASHManifest(url);
+  } else {
+    log("No manifest URL found, enter one above");
+  }
+}
+
+window.addEventListener('load', init);
+
+})();
+    </script>
+  </body>
+</html>
