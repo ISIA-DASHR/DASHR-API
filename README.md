@@ -1,6 +1,6 @@
 ## DASHR API ##
 
-DASHR API allows you to take advantage of MPEG-DASH and stream it through HTML <video> tag. 
+DASHR API allows you to take advantage of MPEG-DASH and stream it through HTML video tag. 
 
 **No plugin to install.**
 
