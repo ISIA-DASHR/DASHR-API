@@ -56,3 +56,9 @@ It’s a requirejs module and it needs a browser supporting Media Source API in 
 - switchRepresentation(type,id_aset,id_rep) : used to manually change a track.
 
 That’s all for the moment.** Don’t forget to check out the wrapper we did for videojs on [https://github.com/ISIA-DASHR/videojs-DASHR-tech](https://github.com/ISIA-DASHR/videojs-DASHR-tech "https://github.com/ISIA-DASHR/videojs-DASHR-tech")**
+
+## Thanks To : ##
+
+Google / Youtube for http://dash-mse-test.appspot.com/
+DASH-JS http://www-itec.uni-klu.ac.at/dash/?p=792
+GPAC http://gpac.wp.mines-telecom.fr/
