@@ -60,5 +60,7 @@ That’s all for the moment.** Don’t forget to check out the wrapper we did fo
 ## Thanks To : ##
 
 Google / Youtube for http://dash-mse-test.appspot.com/
+
 DASH-JS http://www-itec.uni-klu.ac.at/dash/?p=792
+
 GPAC http://gpac.wp.mines-telecom.fr/
