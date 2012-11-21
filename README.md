@@ -57,6 +57,23 @@ It’s a requirejs module and it needs a browser supporting Media Source API in 
 
 That’s all for the moment.** Don’t forget to check out the wrapper we did for videojs on [https://github.com/ISIA-DASHR/videojs-DASHR-tech](https://github.com/ISIA-DASHR/videojs-DASHR-tech "https://github.com/ISIA-DASHR/videojs-DASHR-tech")**
 
+## MPD Generation : ##
+
+First of all you need to create a proper mp4 file. And then you need to use mp4box to package to mpd
+
+Here are the command line i used:
+
+> ffmpeg -i M2.h264 -vcodec libx264 -vprofile baseline -b:v 1300k -pix_fmt yuv420p -keyint_min 125 -g 125 -sc_threshold 0 -r 25 high.mp4
+> MP4Box -dash 5000 -rap -frag-rap -profile onDemand high.mp4
+
+I'm not sure it's perfect but one point seems important to be working: you need keyint_min = g  and g / framerate = dash_fragment_duration 
+
+In this case 125/25 = 5s which is what is specified for -dash
+
+And -pix_fmt yuv420p is because it seems chrome only handle that pixel format
+
+More over in order to work in chrome you need a rap in the beginning of each segment, it's why there is -rap and -frag-rap
+
 ## Thanks To : ##
 
 Google / Youtube for http://dash-mse-test.appspot.com/
