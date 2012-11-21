@@ -20,6 +20,8 @@ define(['./VirtualBufferedManager'], function(VirtualBufferedManager){
 		this.is_ready = false;
 		this.is_initiated = false;
 
+		this.storedBufferInfos = new Array();
+
 		
 		this.bufferize();
 	}
@@ -51,6 +53,12 @@ define(['./VirtualBufferedManager'], function(VirtualBufferedManager){
 		//il faudrait plutot faire l'intersection des times range de chaque sourcebuffer
 		// mais pour simplifier ou prend celui qui finit le plus proche de la position de lecture. 
 		//c linfos la plus importante
+		
+		if(!this.storedBufferInfos.length)
+		{
+			return new VirtualBufferedManager();
+		}
+		
 		var bt = new Array();
 		for(var i=0; i<this.storedBufferInfos.length; i++)
 		{

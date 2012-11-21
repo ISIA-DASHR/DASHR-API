@@ -45,7 +45,14 @@ define(function(){
 	
 	VBM.prototype.start = function(i)
 	{
-		return this.buffered[i].start;
+		try
+		{
+			return this.buffered[i].start;
+		}
+		catch(e)
+		{
+			return 0;
+		}
 	}
 	
 	VBM.prototype.end = function(i)
